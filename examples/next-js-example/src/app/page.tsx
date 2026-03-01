@@ -1,32 +1,34 @@
 import Image from "next/image";
 import Client from "@/components/client";
-import { Ore } from "@glamboyosa/ore";
+import { stream } from "@glamboyosa/ore";
 import { Suspense } from "react";
 
-const ore = new Ore({
-  url: "http://localhost:4000/server-component/",
-  headers: {
-    "Cache-Control": "no-cache",
-  },
-});
-async function RecursiveText({ buffer }: { buffer: any }) {
-  const { done, value } = await buffer.read();
-  console.log(value, done);
-  if (done) return null;
-  const text = new TextDecoder().decode(value);
-  console.log(text);
+async function RecursiveText({ iterator }: { iterator: AsyncIterator<string | Uint8Array> }) {
+  const result = await iterator.next();
+  if (result.done) return null;
+  const value = result.value;
+  const text = typeof value === 'string' ? value : new TextDecoder().decode(value);
+  
   return (
     <span>
       {text}
       <Suspense>
-        <RecursiveText buffer={buffer} />
+        <RecursiveText iterator={iterator} />
       </Suspense>
     </span>
   );
 }
+
 export default async function Home() {
-  const stream = await ore.fetchSSEForRSC();
-  console.log(stream);
+  const dataStream = stream("http://localhost:4000/server-component/", {
+    headers: { "Cache-Control": "no-cache" },
+    decode: true, // We want strings
+  });
+  
+  // Get the iterator from the generator
+  // AsyncGenerator implements AsyncIterator
+  const iterator = dataStream[Symbol.asyncIterator]();
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-between p-24">
       <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
@@ -35,7 +37,7 @@ export default async function Home() {
             <h4>Server Component stream:</h4>
             <p className="w-1/2">
               <Suspense>
-                <RecursiveText buffer={stream!.getReader()} />
+                <RecursiveText iterator={iterator} />
               </Suspense>
             </p>
           </div>

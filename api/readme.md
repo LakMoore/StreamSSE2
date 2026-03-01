@@ -1,18 +1,16 @@
 # Ore
 
-Ore is a JavaScript / TypeScript package that simplifies the consumption of Server-Sent Events (SSE) in web applications. It provides an easy-to-use interface for establishing SSE connections, handling incoming events, and implementing retry strategies in case of connection failures.
-
-## Motivation
-
-Consuming Server-Sent Events (SSE) or streaming data in web applications isn't always well-documented and can be complex or just plain unreliable to implement. Ore aims to simplify this process by providing a straightforward and reliable way to consume SSE streams.
+Ore is a modern, lightweight JavaScript/TypeScript library for robust streaming and Server-Sent Events (SSE) consumption. It provides a simple, bulletproof API for handling streams with automatic retries and easy integration into modern frameworks like React, Next.js, and more.
 
 ## Features
 
-- Establish SSE connections with ease.
-- Handle incoming SSE events and process them accordingly.
-- Implement retry strategies for reconnecting to the SSE endpoint in case of connection failures.
-- Customizable headers for SSE requests.
-- Set maximum retries for connection attempts.
+- **Bulletproof Streaming:** Robust handling of connection drops with automatic retries.
+- **Dual Mode:** 
+  - `stream()`: For raw text/byte streaming (e.g. AI responses, logs).
+  - `streamSSE()`: For spec-compliant Server-Sent Events parsing.
+- **Modern API:** Uses Async Generators for clean, modern usage (`for await...of`).
+- **Universal:** Works in Browser, Node.js, and Edge runtimes.
+- **Zero Dependencies:** Tiny footprint.
 
 ## Install
 
@@ -22,58 +20,141 @@ npm install @glamboyosa/ore
 
 ## Usage
 
-```typescript
-import Ore from "@glamboyosa/ore";
+### Raw Streaming (Text/Bytes)
 
-// Initialize Ore with URL and optional headers
-const ore = new Ore({
-  url: "http://example.com/sse-endpoint",
-  headers: {
-    "Cache-Control": "no-cache",
-  },
+Perfect for AI chat streams, logs, or custom protocols.
+
+```typescript
+import { stream } from "@glamboyosa/ore";
+
+// Basic usage
+for await (const chunk of stream("http://api.example.com/chat")) {
+  console.log(chunk); // "Hello", " world", "!"
+}
+
+// With options
+const ac = new AbortController();
+const dataStream = stream("http://api.example.com/chat", {
+  headers: { "Authorization": "Bearer token" },
+  retries: 3,
+  signal: ac.signal,
+  decode: true, // Set to false to get Uint8Array
 });
 
-// Start SSE connection
-ore.fetchSSE(
-  (buffer, parts) => {
-    console.log("Received buffer:", buffer);
-    // Process the received buffer
-
-    const b = parts[parts.length - 1];
-    console.log("Received parts i.e. events", parts);
-    console.log("Buffer per event", b);
-    // process the buffer per event
-  },
-  () => {
-    console.log("Stream ended");
-    // Handle stream end
-  }
-);
+for await (const chunk of dataStream) {
+  // ...
+}
 ```
 
-## Class Parameters
+### Server-Sent Events (SSE)
 
-- `url`: `string` - The URL of the SSE endpoint.
-- `headers`: `HeadersInit` (optional) - Optional headers to include in the SSE request. Must be an object where keys are header names and values are header values.
+Parses standard SSE format (`data: ...`, `event: ...`, `id: ...`).
 
-## `fetchSSE` Function Parameters
+```typescript
+import { streamSSE } from "@glamboyosa/ore";
 
-- `onBufferReceived`: `function` - Callback function to handle received SSE buffers. Receives the buffer and the optionally the parts i.e. new events as a parameter.
-- `onStreamEnded`: `function` - Callback function to handle stream end events. Receives the internal state of if the buffer stream is ended.
-- `retries`: `number` (optional) - Optional parameter to specify the maximum number of retry attempts. Default is 3.
+for await (const event of streamSSE("http://api.example.com/events")) {
+  console.log(event.id);
+  console.log(event.event); // e.g., 'update'
+  console.log(event.data);  // The message payload
+}
+```
 
-## Working with React Server Components
+### Usage with React
 
-While Ore is intended to work with client components, it is possible to use it in server components using the `fetchSSEForRSC` function. The function takes optional `retries`: `number` (optional) - Optional parameter to specify the maximum number of retry attempts. Default is 3. and `customHeaders`: `HeadersInit` (optional) - Optional headers to include in the SSE request. Must be an object where keys are header names and values are header values.
+```tsx
+import { useEffect, useState } from "react";
+import { stream } from "@glamboyosa/ore";
 
-### Usage with RSCs
+function ChatComponent() {
+  const [messages, setMessages] = useState("");
 
-Checkout the `next-js-example` directory for a full example on how to use it with Server Components [here](https://github.com/glamboyosa/ore/blob/main/examples/next-js-example/src/app/page.tsx)
+  useEffect(() => {
+    const controller = new AbortController();
 
-## Contributing
+    (async () => {
+      try {
+        for await (const chunk of stream("/api/chat", { signal: controller.signal })) {
+          setMessages(prev => prev + chunk);
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error(err);
+      }
+    })();
 
-Contributions to @glamboyosa/ore are welcome! If you have suggestions for improvements or encounter any issues, feel free to open an issue or submit a pull request on GitHub.
+    return () => controller.abort();
+  }, []);
+
+  return <div>{messages}</div>;
+}
+```
+
+### Usage with Next.js Server Components
+
+Ore works great with React Server Components (RSC) and Suspense for streaming HTML.
+
+```tsx
+import { stream } from "@glamboyosa/ore";
+import { Suspense } from "react";
+
+// Recursive component to stream data
+async function StreamViewer({ iterator }) {
+  const { value, done } = await iterator.next();
+  if (done) return null;
+  
+  return (
+    <span>
+      {value}
+      <Suspense>
+        <StreamViewer iterator={iterator} />
+      </Suspense>
+    </span>
+  );
+}
+
+export default function Page() {
+  const dataStream = stream("http://api.example.com/stream");
+  const iterator = dataStream[Symbol.asyncIterator]();
+
+  return (
+    <Suspense fallback="Loading...">
+      <StreamViewer iterator={iterator} />
+    </Suspense>
+  );
+}
+```
+
+## API Reference
+
+### `stream(url: string, options?: StreamOptions)`
+
+Returns an `AsyncGenerator<string | Uint8Array>`.
+
+**Options:**
+- `headers`: `HeadersInit` - Custom headers.
+- `retries`: `number` (default: 3) - Max retry attempts on failure.
+- `signal`: `AbortSignal` - To cancel the request.
+- `decode`: `boolean` (default: true) - If true, yields strings. If false, yields `Uint8Array`.
+
+### `streamSSE(url: string, options?: OreOptions)`
+
+Returns an `AsyncGenerator<SSEEvent>`.
+
+**Options:**
+- `headers`: `HeadersInit`
+- `retries`: `number` (default: 3)
+- `signal`: `AbortSignal`
+
+**SSEEvent Interface:**
+```typescript
+interface SSEEvent {
+  id: string | null;
+  event: string | null;
+  data: string;
+  retry?: number;
+}
+```
 
 ## License
 
-This project is licensed under the MIT License.
+MIT

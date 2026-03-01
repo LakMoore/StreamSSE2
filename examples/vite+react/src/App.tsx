@@ -1,38 +1,42 @@
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
-import { Ore } from "@glamboyosa/ore";
+import { stream } from "@glamboyosa/ore";
 import { useEffect, useRef, useState } from "react";
-const ore = new Ore({
-  url: "http://localhost:4000/",
-  headers: {
-    "Cache-Control": "no-cache",
-  },
-});
 
 function App() {
   const [chat, setCurrentChat] = useState("");
   const isFirstRun = useRef(true);
+  
   useEffect(() => {
     if (isFirstRun.current) {
       isFirstRun.current = false;
-      console.log("console:");
-      ore.fetchSSE(
-        (buffer, parts) => {
-          console.log("Received buffer:", buffer);
-          setCurrentChat(buffer);
-          // Process the received buffer
+      const controller = new AbortController();
 
-          const b = parts[parts.length - 1];
-          console.log("Received parts i.e. events", parts);
-          console.log("Buffer per event", b);
-        },
-        (streamEnded) => {
-          console.log("Stream ended", streamEnded);
+      (async () => {
+        try {
+          console.log("Starting stream...");
+          for await (const chunk of stream("http://localhost:4000/", {
+            headers: { "Cache-Control": "no-cache" },
+            signal: controller.signal,
+          })) {
+            // The server sends raw text chunks, so we just append them.
+            // stream() yields decoded strings by default.
+            setCurrentChat((prev) => prev + (chunk as string));
+          }
+        } catch (err: any) {
+           if (err.name !== 'AbortError') {
+             console.error("Stream failed", err);
+           }
         }
-      );
+      })();
+
+      return () => {
+        controller.abort();
+      };
     }
   }, []);
+
   return (
     <>
       <div>
