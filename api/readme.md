@@ -1,6 +1,10 @@
-# Ore
+# SSE Events 2
 
-Ore is a modern, lightweight JavaScript/TypeScript library for robust streaming and Server-Sent Events (SSE) consumption. It provides a simple, bulletproof API for handling streams with automatic retries and easy integration into modern frameworks like React, Next.js, and more.
+Forked from Ore by Timothy Ogbemudia, SSE Events 2 is a modern, lightweight TypeScript library for robust streaming and Server-Sent Events (SSE) consumption. It provides a simple, bulletproof API for handling streams with automatic retries and easy integration into Node.js server-side code.
+
+Unlike Ore, this is not for integration into client-side code.
+
+Specific to my needs, this fork uses the node:http2 client to open streams.  There are other solutions published if you can use http1.
 
 ## Features
 
@@ -9,13 +13,13 @@ Ore is a modern, lightweight JavaScript/TypeScript library for robust streaming 
   - `stream()`: For raw text/byte streaming (e.g. AI responses, logs).
   - `streamSSE()`: For spec-compliant Server-Sent Events parsing.
 - **Modern API:** Uses Async Generators for clean, modern usage (`for await...of`).
-- **Universal:** Works in Browser, Node.js, and Edge runtimes.
+- **Build for Node.js:** Works in Node.js (not your browser).
 - **Zero Dependencies:** Tiny footprint.
 
 ## Install
 
 ```bash
-npm install @glamboyosa/ore
+npm install sse-events-2
 ```
 
 ## Usage
@@ -25,7 +29,7 @@ npm install @glamboyosa/ore
 Perfect for AI chat streams, logs, or custom protocols.
 
 ```typescript
-import { stream } from "@glamboyosa/ore";
+import { stream } from "sse-events-2";
 
 // Basic usage
 for await (const chunk of stream("http://api.example.com/chat")) {
@@ -51,76 +55,12 @@ for await (const chunk of dataStream) {
 Parses standard SSE format (`data: ...`, `event: ...`, `id: ...`).
 
 ```typescript
-import { streamSSE } from "@glamboyosa/ore";
+import { streamSSE } from "sse-events-2";
 
 for await (const event of streamSSE("http://api.example.com/events")) {
   console.log(event.id);
   console.log(event.event); // e.g., 'update'
   console.log(event.data);  // The message payload
-}
-```
-
-### Usage with React
-
-```tsx
-import { useEffect, useState } from "react";
-import { stream } from "@glamboyosa/ore";
-
-function ChatComponent() {
-  const [messages, setMessages] = useState("");
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    (async () => {
-      try {
-        for await (const chunk of stream("/api/chat", { signal: controller.signal })) {
-          setMessages(prev => prev + chunk);
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') console.error(err);
-      }
-    })();
-
-    return () => controller.abort();
-  }, []);
-
-  return <div>{messages}</div>;
-}
-```
-
-### Usage with Next.js Server Components
-
-Ore works great with React Server Components (RSC) and Suspense for streaming HTML.
-
-```tsx
-import { stream } from "@glamboyosa/ore";
-import { Suspense } from "react";
-
-// Recursive component to stream data
-async function StreamViewer({ iterator }) {
-  const { value, done } = await iterator.next();
-  if (done) return null;
-  
-  return (
-    <span>
-      {value}
-      <Suspense>
-        <StreamViewer iterator={iterator} />
-      </Suspense>
-    </span>
-  );
-}
-
-export default function Page() {
-  const dataStream = stream("http://api.example.com/stream");
-  const iterator = dataStream[Symbol.asyncIterator]();
-
-  return (
-    <Suspense fallback="Loading...">
-      <StreamViewer iterator={iterator} />
-    </Suspense>
-  );
 }
 ```
 
@@ -136,7 +76,7 @@ Returns an `AsyncGenerator<string | Uint8Array>`.
 - `signal`: `AbortSignal` - To cancel the request.
 - `decode`: `boolean` (default: true) - If true, yields strings. If false, yields `Uint8Array`.
 
-### `streamSSE(url: string, options?: OreOptions)`
+### `streamSSE(url: string, options?: SSEOptions)`
 
 Returns an `AsyncGenerator<SSEEvent>`.
 

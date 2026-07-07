@@ -1,6 +1,6 @@
 {
-  "name": "@glamboyosa/ore",
-  "version": "1.0.0",
+  "name": "sse-events-2",
+  "version": "1.0.1",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -9,15 +9,27 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["@glamboyosa/ore", "server-sent events", "SSE", "api"],
+  "keywords": [
+    "@glamboyosa/ore",
+    "sse-events-2",
+    "server-sent events",
+    "SSE",
+    "api",
+    "Lak Moore",
+    "nodejs",
+    "typescript",
+    "http2"
+  ],
   "scripts": {
     "build": "tsup",
     "fmt": "pnpm biome format . --write && pnpm biome check . --apply-unsafe "
   },
-  "files": ["./dist/**"],
+  "files": [
+    "./dist/**"
+  ],
   "devDependencies": {
     "@biomejs/biome": "^1.6.3",
-    "@types/node": "^20.11.30",
+    "@types/node": "^20.19.43",
     "tsup": "^8.0.2",
     "typescript": "^5.4.3"
   }
