@@ -12,12 +12,14 @@ import http2 from "node:http2";
 import util from "node:util";
 
 export class SSEError extends Error {
-  constructor(message: string, response?: Response) {
+  constructor(message: string, response?: Response, fatal: boolean = false) {
     super(message);
     this.name = "SSEError";
     this.response = response;
+    this.fatal = fatal;
   }
   response?: Response;
+  fatal: boolean = false;
 }
 
 export interface SSEOptions {
@@ -92,7 +94,7 @@ export async function* stream(
           }
         } else {
           throw new SSEError(
-            `Stream Connection Error`,
+            `Stream Server Error`,
             new Response(null, {
               status: status,
               statusText: statusText,
@@ -104,7 +106,7 @@ export async function* stream(
 
       req.on("error", (err: unknown) => {
         req.close();
-        throw new SSEError(`SSE Connection Error: ${util.inspect(err)}`);
+        throw new SSEError(`Stream Connection Error: ${util.inspect(err)}`);
       });
 
       const decoder = new TextDecoder();
@@ -137,6 +139,8 @@ export async function* stream(
   }
   throw new SSEError(
     `Max retries (${retries}) exceeded. Last error: ${util.inspect(lastError)}`,
+    undefined,
+    true
   );
 }
 
@@ -204,7 +208,7 @@ export async function* streamSSE(
           retryCount = 0; // Reset retry count on successful connection
         } else {
           throw new SSEError(
-            `SSE Connection Error`,
+            `SSE Server Error`,
             new Response(null, {
               status: status as number,
               statusText: statusText,
@@ -289,20 +293,21 @@ export async function* streamSSE(
               break;
             }
           }
-          // handle any final buffered event if needed
-          if (hasData) {
-            const data = currentEvent.data?.trimEnd();
-            if (data) {
-              const event: SSEEvent = {
-                id: currentEvent.id ?? lastEventId,
-                event: currentEvent.event ?? null,
-                data: data,
-                retry: currentEvent.retry,
-              };
-              if (event.id) lastEventId = event.id;
-              yield event;
-            }
-          }
+        }
+      }
+
+      // handle any final buffered event if needed
+      if (hasData) {
+        const data = currentEvent.data?.trimEnd();
+        if (data) {
+          const event: SSEEvent = {
+            id: currentEvent.id ?? lastEventId,
+            event: currentEvent.event ?? null,
+            data: data,
+            retry: currentEvent.retry,
+          };
+          if (event.id) lastEventId = event.id;
+          yield event;
         }
       }
 
@@ -322,5 +327,7 @@ export async function* streamSSE(
   }
   throw new SSEError(
     `Max retries exceeded. Last error: ${util.inspect(lastError)}`,
+    undefined,
+    true
   );
 }
