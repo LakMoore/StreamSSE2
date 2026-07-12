@@ -10,6 +10,7 @@
 
 import http2 from "node:http2";
 import util from "node:util";
+import { setTimeout } from "node:timers/promises";
 
 export class SSEError extends Error {
   constructor(message: string, response?: Response, fatal: boolean = false) {
@@ -44,6 +45,8 @@ const RETRY_INTERVAL_DEFAULT = 1000; // Default retry interval in milliseconds
 /**
  * Fetches a stream from a URL and yields raw chunks.
  * Handles connection retries.
+ * The stream will complete without retry if the response completes
+ * or starts with a 204 No Content status.
  *
  * @param url - The URL to stream from
  * @param options - Configuration options
@@ -60,10 +63,11 @@ export async function* stream(
 
   let retryCount = 0;
   let lastError: unknown = null;
+  let endedByServer = false;
 
   const urlObj = new URL(url);
 
-  while (retryCount <= retries) {
+  while (retryCount <= retries && !endedByServer) {
     const client = http2.connect(urlObj.origin);
 
     try {
@@ -80,33 +84,55 @@ export async function* stream(
       req.on("response", (headers: Record<string, string>) => {
         const status = Number.parseInt(headers[":status"]);
         const statusText = headers[":statusText"] ?? "";
-        if (status) {
-          if (status === 204) return; // No Content -> End of stream
-          if (status >= 400 && status < 500) {
-            throw new SSEError(
+        if (Number.isNaN(status)) {
+          req.destroy(
+            new SSEError(
+              `Stream Connection Error: Invalid status`,
+              new Response(null, {
+                status: 0,
+                statusText: statusText,
+                headers: headers,
+              }),
+            ),
+          );
+        } else if (status === 204) {
+          endedByServer = true;
+          // gracefully end the request so the async iterator completes
+          try {
+            req.close();
+          } catch {
+            // ignore close errors
+          }
+        }
+        else if (status >= 400 && status < 500) {
+          req.destroy(
+            new SSEError(
               `Stream Client Error`,
               new Response(null, {
                 status: status,
                 statusText: statusText,
                 headers: headers,
               }),
-            );
-          }
-        } else {
-          throw new SSEError(
-            `Stream Server Error`,
-            new Response(null, {
-              status: status,
-              statusText: statusText,
-              headers: headers,
-            }),
+            ),
           );
+        } else if (status >= 500) {
+          req.destroy(
+            new SSEError(
+              `Stream Server Error`,
+              new Response(null, {
+                status: status,
+                statusText: statusText,
+                headers: headers,
+              }),
+            ),
+          );
+        } else {
+          retryCount = 0; // Reset retry count on successful connection
         }
       });
 
       req.on("error", (err: unknown) => {
-        req.close();
-        throw new SSEError(`Stream Connection Error: ${util.inspect(err)}`);
+        req.destroy(new SSEError(`Stream Transport Error: ${util.inspect(err)}`));
       });
 
       const decoder = new TextDecoder();
@@ -118,7 +144,9 @@ export async function* stream(
           yield chunk;
         }
       }
-      return; // Stream completed successfully
+
+      endedByServer = true;  // Stream completed successfully
+      return; 
     } catch (error: any) {
       if (signal?.aborted) {
         throw error;
@@ -126,17 +154,22 @@ export async function* stream(
       lastError = error;
       console.error("Stream error:", error);
     } finally {
-      retryCount++;
       // Ensure the client is closed to free resources
       if (client && !client.destroyed) {
         client.close();
       }
-      // backoff before retrying
-      await new Promise((resolve) =>
-        setTimeout(resolve, RETRY_INTERVAL_DEFAULT * retryCount),
-      );
+      if (!endedByServer) {
+        retryCount++;
+        // backoff before retrying
+        await setTimeout(RETRY_INTERVAL_DEFAULT * retryCount);
+      }
     }
   }
+
+  if (endedByServer) {
+    return; // Stream ended by server with 204 No Content
+  }
+
   throw new SSEError(
     `Max retries (${retries}) exceeded. Last error: ${util.inspect(lastError)}`,
     undefined,
@@ -147,6 +180,7 @@ export async function* stream(
 /**
  * Fetches a stream and parses it as Server-Sent Events (SSE).
  * Handles 'data', 'event', 'id', 'retry' fields and automatic reconnection.
+ * Will continue to retry even on 204 No Content responses and stream completion.
  *
  * @param url - The URL to stream from
  * @param options - Configuration options
@@ -193,34 +227,57 @@ export async function* streamSSE(
       req.on("response", (headers: Record<string, string>) => {
         const status = Number.parseInt(headers[":status"]);
         const statusText = headers[":statusText"] ?? "";
-        if (status) {
-          if (status === 204) return; // No Content -> End of stream
-          if (status >= 400 && status < 500) {
-            throw new SSEError(
+        if (Number.isNaN(status)) {
+          req.destroy(
+            new SSEError(
+              `SSE Connection Error: Invalid status`,
+              new Response(null, {
+                status: 0,
+                statusText: statusText,
+                headers: headers,
+              }),
+            ),
+          );
+        } else if (status === 204) {  // No Content -> End of stream
+          req.destroy(
+            new SSEError(
+              `SSE No Content Error`,
+              new Response(null, {
+                status: status as number,
+                statusText: statusText,
+                headers: headers,
+              }),
+            ),
+          );
+        } else if (status >= 400 && status < 500) {
+          req.destroy(
+            new SSEError(
               `SSE Client Error`,
               new Response(null, {
                 status: status as number,
                 statusText: statusText,
                 headers: headers,
               }),
-            );
-          }
-          retryCount = 0; // Reset retry count on successful connection
-        } else {
-          throw new SSEError(
-            `SSE Server Error`,
-            new Response(null, {
-              status: status as number,
-              statusText: statusText,
-              headers: headers,
-            }),
+            ),
           );
+        } else if (status >= 500) {
+          req.destroy(
+            new SSEError(
+              `SSE Server Error`,
+              new Response(null, {
+                status: status as number,
+                statusText: statusText,
+                headers: headers,
+              }),
+            ),
+          );
+        } else {
+          retryCount = 0; // Reset retry count on successful connection
         }
       });
 
       req.on("error", (err: unknown) => {
-        req.close();
-        throw new SSEError(`SSE Connection Error: ${util.inspect(err)}`);
+        req.destroy(new SSEError(`SSE Transport Error: ${util.inspect(err)}`));
       });
 
       let buffer = "";
@@ -322,7 +379,7 @@ export async function* streamSSE(
       if (client && !client.destroyed) {
         client.close();
       }
-      await new Promise((r) => setTimeout(r, retryInterval));
+      await setTimeout(retryInterval);
     }
   }
   throw new SSEError(
